@@ -45,6 +45,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         autoItem.state = defaults.bool(forKey: autoKey) ? .on : .off
         allItem.state = defaults.bool(forKey: allKey) ? .on : .off
         refreshLoginState()
+        // Clear any backlog from before pruning existed or from skipped applies.
+        queue.async {
+            let active = NSScreen.screens.compactMap { NSWorkspace.shared.desktopImageURL(for: $0) }
+            WallpaperProcessor.prune(keeping: active)
+        }
         updateWatching()
 
         // Menu click triggers a fresh pass only in auto mode; otherwise use Hide Notch Now.
@@ -157,6 +162,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                         do {
                             try ws.setDesktopImageURL(out, for: screen, options: opts)
                             self.setStatus("Applied: \(current.lastPathComponent)")
+                            let active = NSScreen.screens.compactMap { ws.desktopImageURL(for: $0) }
+                            self.queue.async { WallpaperProcessor.prune(keeping: active) }
                         } catch {
                             self.setStatus("Set failed: \(error.localizedDescription)")
                         }

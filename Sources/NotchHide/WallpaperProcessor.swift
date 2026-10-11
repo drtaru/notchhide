@@ -29,6 +29,28 @@ enum WallpaperProcessor {
         url.standardizedFileURL.path.hasPrefix(processedDir.standardizedFileURL.path)
     }
 
+    static let maxProcessedImages = 20
+
+    /// Keeps only the `maxProcessedImages` most recently written/used processed PNGs.
+    /// Files in `keeping` (wallpapers currently applied) are never deleted.
+    static func prune(keeping: [URL] = []) {
+        let fm = FileManager.default
+        guard let files = try? fm.contentsOfDirectory(at: processedDir,
+                                                      includingPropertiesForKeys: [.contentModificationDateKey],
+                                                      options: [.skipsHiddenFiles]) else { return }
+        let protected = Set(keeping.map { $0.standardizedFileURL.path })
+        let pngs = files.filter { $0.pathExtension == "png" }
+        guard pngs.count > maxProcessedImages else { return }
+
+        func mtime(_ url: URL) -> Date {
+            (try? url.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast
+        }
+        let newestFirst = pngs.sorted { mtime($0) > mtime($1) }
+        for url in newestFirst.dropFirst(maxProcessedImages) where !protected.contains(url.standardizedFileURL.path) {
+            try? fm.removeItem(at: url)
+        }
+    }
+
     /// Height in points of the black bar: the full menu bar strip, so the notch blends in.
     static func barHeight(for screen: NSScreen) -> CGFloat {
         let menuBar = screen.frame.maxY - screen.visibleFrame.maxY
@@ -52,7 +74,11 @@ enum WallpaperProcessor {
         let key = "\(source.path)|\(attrs?[.modificationDate] ?? "")|\(attrs?[.size] ?? "")|\(width)x\(height)|\(barPx)"
         let digest = SHA256.hash(data: Data(key.utf8)).map { String(format: "%02x", $0) }.joined().prefix(16)
         let outURL = processedDir.appendingPathComponent("\(digest).png")
-        if FileManager.default.fileExists(atPath: outURL.path) { return outURL }
+        if FileManager.default.fileExists(atPath: outURL.path) {
+            // Bump mtime so pruning treats reused images as recent.
+            try? FileManager.default.setAttributes([.modificationDate: Date()], ofItemAtPath: outURL.path)
+            return outURL
+        }
 
         guard let src = CGImageSourceCreateWithURL(source as CFURL, nil),
               let image = CGImageSourceCreateImageAtIndex(src, 0, nil) else {

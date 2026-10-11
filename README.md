@@ -77,7 +77,7 @@ Sources/NotchHide/WallpaperProcessor.swift   Image rendering and caching
 
 ## Data stored
 
-- Processed wallpapers in `~/Library/Application Support/NotchHide/processed/`. Delete this folder to reclaim space.
+- Processed wallpapers in `~/Library/Application Support/NotchHide/processed/`. Only the 20 most recently used images are kept; older ones are deleted after each apply. Wallpapers currently set on a display are never deleted. A Space you haven't visited recently may lose its processed image and be re-processed when you switch to it.
 - Preferences and the original wallpaper paths in the app's `UserDefaults`.
 
 The app makes no network requests.
