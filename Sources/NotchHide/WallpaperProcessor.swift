@@ -65,6 +65,13 @@ enum WallpaperProcessor {
     /// Renders `source` fill-cropped to the screen's pixel size with a black bar on top.
     /// Returns the URL of the processed PNG (cached by content key).
     static func process(source: URL, for screen: NSScreen) throws -> URL {
+        // Pool drains the transient bitmaps; pressure relief hands freed malloc pages back to the OS
+        // so the idle footprint doesn't stay at the rendering peak.
+        defer { malloc_zone_pressure_relief(nil, 0) }
+        return try autoreleasepool { try render(source: source, for: screen) }
+    }
+
+    private static func render(source: URL, for screen: NSScreen) throws -> URL {
         let scale = screen.backingScaleFactor
         let width = Int((screen.frame.width * scale).rounded())
         let height = Int((screen.frame.height * scale).rounded())
@@ -81,9 +88,27 @@ enum WallpaperProcessor {
         }
 
         guard let src = CGImageSourceCreateWithURL(source as CFURL, nil),
-              let image = CGImageSourceCreateImageAtIndex(src, 0, nil) else {
+              let props = CGImageSourceCopyPropertiesAtIndex(src, 0, nil) as? [CFString: Any],
+              let srcW = props[kCGImagePropertyPixelWidth] as? Int,
+              let srcH = props[kCGImagePropertyPixelHeight] as? Int,
+              srcW > 0, srcH > 0 else {
             throw ProcessError.unreadable(source)
         }
+
+        // Decode straight to the size we need instead of the full-resolution bitmap
+        // (a 6K wallpaper is ~100 MB decoded). Never upscale: only use a thumbnail when shrinking.
+        let fillScale = max(CGFloat(width) / CGFloat(srcW), CGFloat(height) / CGFloat(srcH))
+        let needed = Int((CGFloat(max(srcW, srcH)) * fillScale).rounded(.up))
+        let decoded: CGImage?
+        if needed < max(srcW, srcH) {
+            decoded = CGImageSourceCreateThumbnailAtIndex(src, 0, [
+                kCGImageSourceCreateThumbnailFromImageAlways: true,
+                kCGImageSourceThumbnailMaxPixelSize: needed,
+            ] as CFDictionary)
+        } else {
+            decoded = CGImageSourceCreateImageAtIndex(src, 0, nil)
+        }
+        guard let image = decoded else { throw ProcessError.unreadable(source) }
 
         let space = CGColorSpace(name: CGColorSpace.displayP3) ?? CGColorSpaceCreateDeviceRGB()
         guard let ctx = CGContext(data: nil, width: width, height: height, bitsPerComponent: 8,
@@ -105,9 +130,18 @@ enum WallpaperProcessor {
 
         guard let out = ctx.makeImage() else { throw ProcessError.renderFailed }
         try FileManager.default.createDirectory(at: processedDir, withIntermediateDirectories: true)
-        let rep = NSBitmapImageRep(cgImage: out)
-        guard let png = rep.representation(using: .png, properties: [:]) else { throw ProcessError.writeFailed }
-        try png.write(to: outURL, options: .atomic)
+        // Encode straight to disk; avoids NSBitmapImageRep's extra bitmap copy and an in-memory PNG Data.
+        let tmpURL = outURL.appendingPathExtension("tmp")
+        guard let dest = CGImageDestinationCreateWithURL(tmpURL as CFURL, "public.png" as CFString, 1, nil) else {
+            throw ProcessError.writeFailed
+        }
+        CGImageDestinationAddImage(dest, out, nil)
+        guard CGImageDestinationFinalize(dest) else {
+            try? FileManager.default.removeItem(at: tmpURL)
+            throw ProcessError.writeFailed
+        }
+        try? FileManager.default.removeItem(at: outURL)
+        try FileManager.default.moveItem(at: tmpURL, to: outURL)
         return outURL
     }
 }
