@@ -23,7 +23,7 @@ Built as a replacement for TopNotch, which no longer works on newer macOS releas
 ## Build and run
 
 ```sh
-git clone <repo-url>
+git clone https://github.com/drtaru/notchhide.git
 cd notchhide
 ./build.sh
 open build/NotchHide.app
@@ -84,4 +84,4 @@ The app makes no network requests.
 
 ## License
 
-Add a license of your choice before publishing.
+[PolyForm Noncommercial 1.0.0](LICENSE). You may use, modify, and share this software for any noncommercial purpose. Selling it or using it commercially is not permitted. This is source-available, not an OSI-approved open source license.
