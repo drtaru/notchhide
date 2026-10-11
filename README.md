@@ -12,6 +12,7 @@ Built as a replacement for TopNotch, which no longer works on newer macOS releas
 - Detects the current wallpaper and applies the black bar automatically.
 - Optional auto-apply: re-processes when the wallpaper, Space, or display configuration changes.
 - Works per display. Apply to the internal display only (default) or to all connected displays.
+- Optional rounded corners: 28px black corners on all four corners of the wallpaper, with the top corners curving just below the black bar.
 - Restores your original wallpaper at any time.
 - Launch at login toggle.
 
@@ -43,6 +44,7 @@ Because the app is ad-hoc signed, Gatekeeper may block the first launch. Right-c
 | Hide Notch Now | Processes the current wallpaper immediately |
 | Auto-apply on wallpaper change | Watches for changes and applies automatically. When off, nothing runs until you click Hide Notch Now |
 | Apply to all displays | Checked: every connected display. Unchecked: internal display only. Unchecking restores external displays to their original wallpaper |
+| Rounded corners | Adds 26px black rounded corners to all four corners. Toggling re-renders the current wallpaper from the saved original |
 | Launch at login | Registers the app as a login item |
 | Restore Original Wallpaper | Puts back the wallpaper that was active before NotchHide processed it |
 | Quit | Quits the app |

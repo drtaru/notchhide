@@ -30,6 +30,8 @@ enum WallpaperProcessor {
     }
 
     static let maxProcessedImages = 20
+    /// Corner radius in output pixels (14 pt on a 2x display).
+    static let cornerRadiusPx = 28
 
     /// Keeps only the `maxProcessedImages` most recently written/used processed PNGs.
     /// Files in `keeping` (wallpapers currently applied) are never deleted.
@@ -64,21 +66,21 @@ enum WallpaperProcessor {
 
     /// Renders `source` fill-cropped to the screen's pixel size with a black bar on top.
     /// Returns the URL of the processed PNG (cached by content key).
-    static func process(source: URL, for screen: NSScreen) throws -> URL {
+    static func process(source: URL, for screen: NSScreen, cornerRadius: Int = 0) throws -> URL {
         // Pool drains the transient bitmaps; pressure relief hands freed malloc pages back to the OS
         // so the idle footprint doesn't stay at the rendering peak.
         defer { malloc_zone_pressure_relief(nil, 0) }
-        return try autoreleasepool { try render(source: source, for: screen) }
+        return try autoreleasepool { try render(source: source, for: screen, cornerRadius: cornerRadius) }
     }
 
-    private static func render(source: URL, for screen: NSScreen) throws -> URL {
+    private static func render(source: URL, for screen: NSScreen, cornerRadius: Int) throws -> URL {
         let scale = screen.backingScaleFactor
         let width = Int((screen.frame.width * scale).rounded())
         let height = Int((screen.frame.height * scale).rounded())
         let barPx = Int((barHeight(for: screen) * scale).rounded(.up))
 
         let attrs = try? FileManager.default.attributesOfItem(atPath: source.path)
-        let key = "\(source.path)|\(attrs?[.modificationDate] ?? "")|\(attrs?[.size] ?? "")|\(width)x\(height)|\(barPx)"
+        let key = "\(source.path)|\(attrs?[.modificationDate] ?? "")|\(attrs?[.size] ?? "")|\(width)x\(height)|\(barPx)|r\(cornerRadius)"
         let digest = SHA256.hash(data: Data(key.utf8)).map { String(format: "%02x", $0) }.joined().prefix(16)
         let outURL = processedDir.appendingPathComponent("\(digest).png")
         if FileManager.default.fileExists(atPath: outURL.path) {
@@ -126,7 +128,19 @@ enum WallpaperProcessor {
 
         // CGContext origin is bottom-left, so the top bar sits at y = height - barPx.
         ctx.setFillColor(CGColor(red: 0, green: 0, blue: 0, alpha: 1))
-        ctx.fill(CGRect(x: 0, y: height - barPx, width: width, height: barPx))
+        if cornerRadius > 0 {
+            // Black everywhere except a rounded rect covering the area below the bar. The bar is part of
+            // the "outside", and the top corners are rounded at the bar's lower edge.
+            let content = CGRect(x: 0, y: 0, width: width, height: height - barPx)
+            let r = CGFloat(min(cornerRadius, Int(content.width) / 2, Int(content.height) / 2))
+            let path = CGMutablePath()
+            path.addRect(CGRect(x: 0, y: 0, width: width, height: height))
+            path.addPath(CGPath(roundedRect: content, cornerWidth: r, cornerHeight: r, transform: nil))
+            ctx.addPath(path)
+            ctx.fillPath(using: .evenOdd)
+        } else {
+            ctx.fill(CGRect(x: 0, y: height - barPx, width: width, height: barPx))
+        }
 
         guard let out = ctx.makeImage() else { throw ProcessError.renderFailed }
         try FileManager.default.createDirectory(at: processedDir, withIntermediateDirectories: true)

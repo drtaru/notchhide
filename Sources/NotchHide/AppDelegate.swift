@@ -11,7 +11,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let originalsKey = "originals"   // [screenID: original wallpaper path]
     private let autoKey = "autoApply"
     private let allKey = "allDisplays"
+    private let roundedKey = "roundedCorners"
     private var allItem: NSMenuItem!
+    private var roundedItem: NSMenuItem!
     private var loginItem: NSMenuItem!
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -33,6 +35,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         allItem = NSMenuItem(title: "Apply to all displays", action: #selector(toggleAll), keyEquivalent: "")
         allItem.target = self
         menu.addItem(allItem)
+        roundedItem = NSMenuItem(title: "Rounded corners", action: #selector(toggleRounded), keyEquivalent: "")
+        roundedItem.target = self
+        menu.addItem(roundedItem)
         loginItem = NSMenuItem(title: "Launch at login", action: #selector(toggleLogin), keyEquivalent: "")
         loginItem.target = self
         menu.addItem(loginItem)
@@ -44,6 +49,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         defaults.register(defaults: [autoKey: true])
         autoItem.state = defaults.bool(forKey: autoKey) ? .on : .off
         allItem.state = defaults.bool(forKey: allKey) ? .on : .off
+        roundedItem.state = defaults.bool(forKey: roundedKey) ? .on : .off
         refreshLoginState()
         // Clear any backlog from before pruning existed or from skipped applies.
         queue.async {
@@ -121,6 +127,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    @objc private func toggleRounded() {
+        let on = !defaults.bool(forKey: roundedKey)
+        defaults.set(on, forKey: roundedKey)
+        roundedItem.state = on ? .on : .off
+        // Already-processed wallpapers are skipped normally; re-render them from the saved originals.
+        applyAll(reprocess: true)
+    }
+
     @objc private func restoreAll() { restore(screens: NSScreen.screens) }
 
     private func restore(screens: [NSScreen]) {
@@ -138,22 +152,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     // MARK: Core
 
-    private func applyAll() {
+    private func applyAll(reprocess: Bool = false) {
         let ws = NSWorkspace.shared
         let all = defaults.bool(forKey: allKey)
+        let radius = defaults.bool(forKey: roundedKey) ? WallpaperProcessor.cornerRadiusPx : 0
         for screen in NSScreen.screens where all || WallpaperProcessor.isBuiltIn(screen) {
             guard let current = ws.desktopImageURL(for: screen) else { continue }
-            if WallpaperProcessor.isProcessed(current) { continue }   // already ours
             let id = screenID(screen)
+            var source = current
+            if WallpaperProcessor.isProcessed(current) {
+                // Already ours. Only re-render when asked and the original is known.
+                let originals = defaults.dictionary(forKey: originalsKey) as? [String: String] ?? [:]
+                guard reprocess, let path = originals[id] else { continue }
+                source = URL(fileURLWithPath: path)
+            }
             queue.async { [weak self] in
                 do {
-                    let out = try WallpaperProcessor.process(source: current, for: screen)
+                    let out = try WallpaperProcessor.process(source: source, for: screen, cornerRadius: radius)
                     DispatchQueue.main.async {
                         guard let self else { return }
                         // Re-check: user may have changed wallpaper while rendering.
                         guard ws.desktopImageURL(for: screen) == current else { return }
                         var originals = self.defaults.dictionary(forKey: self.originalsKey) as? [String: String] ?? [:]
-                        originals[id] = current.path
+                        originals[id] = source.path
                         self.defaults.set(originals, forKey: self.originalsKey)
                         let opts: [NSWorkspace.DesktopImageOptionKey: Any] = [
                             .imageScaling: NSImageScaling.scaleProportionallyUpOrDown.rawValue,
@@ -161,7 +182,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                         ]
                         do {
                             try ws.setDesktopImageURL(out, for: screen, options: opts)
-                            self.setStatus("Applied: \(current.lastPathComponent)")
+                            self.setStatus("Applied: \(source.lastPathComponent)")
                             let active = NSScreen.screens.compactMap { ws.desktopImageURL(for: $0) }
                             self.queue.async { WallpaperProcessor.prune(keeping: active) }
                         } catch {
